@@ -21,3 +21,5 @@ endif
 
 9p-objs := v9fs/vfs_super.o v9fs/vfs_inode.o v9fs/vfs_addr.o v9fs/vfs_file.o \
 	   v9fs/vfs_dir.o v9fs/vfs_dentry.o v9fs/v9fs.o v9fs/fid.o
+
+9p-$(CONFIG_9P_FSCACHE) := v9fs/cache.o

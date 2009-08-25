@@ -34,6 +34,7 @@
 #include "transport.h"
 #include "v9fs.h"
 #include "v9fs_vfs.h"
+#include "cache.h"
 
 /*
   * Option Parsing (code inspired by NFS code)
@@ -44,11 +45,11 @@ enum {
 	/* Options that take integer arguments */
 	Opt_debug, Opt_dfltuid, Opt_dfltgid, Opt_afid,
 	/* String options */
-	Opt_uname, Opt_remotename, Opt_trans,
+	Opt_uname, Opt_remotename, Opt_trans, Opt_cache, Opt_cachetag,
 	/* Options that take no arguments */
 	Opt_nodevmap,
 	/* Cache options */
-	Opt_cache_loose,
+	Opt_cache_loose, Opt_fscache,
 	/* Access options */
 	Opt_access,
 	/* Error token */
@@ -63,8 +64,10 @@ static const match_table_t tokens = {
 	{Opt_uname, "uname=%s"},
 	{Opt_remotename, "aname=%s"},
 	{Opt_nodevmap, "nodevmap"},
-	{Opt_cache_loose, "cache=loose"},
+	{Opt_cache, "cache=%s"},
 	{Opt_cache_loose, "loose"},
+	{Opt_fscache, "fscache"},
+	{Opt_cachetag, "cachetag=%s"},
 	{Opt_access, "access=%s"},
 	{Opt_err, NULL}
 };
@@ -89,16 +92,16 @@ static int v9fs_parse_options(struct v9fs_session_info *v9ses, char *opts)
 	v9ses->afid = ~0;
 	v9ses->debug = 0;
 	v9ses->cache = 0;
+#ifdef CONFIG_9P_FSCACHE
+	v9ses->cachetag = NULL;
+#endif
 
 	if (!opts)
 		return 0;
 
 	options = kstrdup(opts, GFP_KERNEL);
-	if (!options) {
-		P9_DPRINTK(P9_DEBUG_ERROR,
-			   "failed to allocate copy of option string\n");
-		return -ENOMEM;
-	}
+	if (!options)
+		goto fail_option_alloc;
 
 	while ((p = strsep(&options, ",")) != NULL) {
 		int token;
@@ -143,16 +146,33 @@ static int v9fs_parse_options(struct v9fs_session_info *v9ses, char *opts)
 		case Opt_cache_loose:
 			v9ses->cache = CACHE_LOOSE;
 			break;
+		case Opt_fscache:
+			v9ses->cache = CACHE_FSCACHE;
+			break;
+		case Opt_cachetag:
+#ifdef CONFIG_9P_FSCACHE
+			v9ses->cachetag = match_strdup(&args[0]);
+#endif
+			break;
+		case Opt_cache:
+			s = match_strdup(&args[0]);
+			if (!s)
+				goto fail_option_alloc;
+
+			if (strcmp(s, "loose") == 0)
+				v9ses->cache = CACHE_LOOSE;
+			else if (strcmp(s, "fscache") == 0)
+				v9ses->cache = CACHE_FSCACHE;
+			else
+				v9ses->cache = CACHE_NONE;
+			kfree(s);
+			break;
 
 		case Opt_access:
 			s = match_strdup(&args[0]);
-			if (!s) {
-				P9_DPRINTK(P9_DEBUG_ERROR,
-					   "failed to allocate copy"
-					   " of option argument\n");
-				ret = -ENOMEM;
-				break;
-			}
+			if (!s)
+				goto fail_option_alloc;
+
 			v9ses->flags &= ~V9FS_ACCESS_MASK;
 			if (strcmp(s, "user") == 0)
 				v9ses->flags |= V9FS_ACCESS_USER;
@@ -173,6 +193,11 @@ static int v9fs_parse_options(struct v9fs_session_info *v9ses, char *opts)
 	}
 	kfree(options);
 	return ret;
+
+fail_option_alloc:
+	P9_DPRINTK(P9_DEBUG_ERROR, 
+		   "failed to allocate copy of option argument\n");
+	return -ENOMEM;
 }
 
 /**
@@ -249,6 +274,10 @@ struct p9_fid *v9fs_session_init(struct v9fs_session_info *v9ses,
 	else
 		fid->uid = ~0;
 
+#ifdef CONFIG_9P_FSCACHE
+	/* register the session for caching */
+	v9fs_cache_session_get_cookie(v9ses);
+#endif
 	return fid;
 
 error:
@@ -268,6 +297,10 @@ void v9fs_session_close(struct v9fs_session_info *v9ses)
 		v9ses->clnt = NULL;
 	}
 
+#ifdef CONFIG_9P_FSCACHE
+	v9fs_cache_session_put_cookie(v9ses);
+	kfree(v9ses->cachetag);
+#endif
 	__putname(v9ses->uname);
 	__putname(v9ses->aname);
 }
@@ -293,7 +326,12 @@ extern int v9fs_error_init(void);
 
 static int __init init_v9fs(void)
 {
+	int err;
 	printk(KERN_INFO "Installing v9fs 9p2000 file system support\n");
+	err = v9fs_cache_register();
+	if (err < 0)
+		return err;
+
 	/* TODO: Setup list of registered trasnport modules */
 	return register_filesystem(&v9fs_fs_type);
 }
@@ -305,6 +343,7 @@ static int __init init_v9fs(void)
 
 static void __exit exit_v9fs(void)
 {
+	v9fs_cache_unregister();
 	unregister_filesystem(&v9fs_fs_type);
 }
 

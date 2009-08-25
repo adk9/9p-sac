@@ -4,7 +4,7 @@ all::
 	$(MAKE) -C $(KERNELDIR) M=`pwd` "$$@"
 
 fscache:
-	$(MAKE) -C $(KERNELDIR) M=`pwd` FSCACHE=1 "$$@"
+	$(MAKE) -C $(KERNELDIR) M=`pwd` FSCACHE=1 DEBUG9P=1 "$$@"
 
 debug:
 	$(MAKE) -C $(KERNELDIR) M=`pwd` DEBUG9P=1 "$$@"

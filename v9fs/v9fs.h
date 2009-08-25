@@ -51,6 +51,7 @@ enum p9_session_flags {
 enum p9_cache_modes {
 	CACHE_NONE,
 	CACHE_LOOSE,
+	CACHE_FSCACHE,
 };
 
 /**
@@ -60,6 +61,7 @@ enum p9_cache_modes {
  * @debug: debug level
  * @afid: authentication handle
  * @cache: cache mode of type &p9_cache_modes
+ * @fscache: session cookie associated with FS-Cache
  * @options: copy of options string given by user
  * @uname: string user name to mount hierarchy as
  * @aname: mount specifier for remote hierarchy
@@ -84,6 +86,10 @@ struct v9fs_session_info {
 	unsigned short debug;
 	unsigned int afid;
 	unsigned int cache;
+#ifdef CONFIG_9P_FSCACHE
+	char *cachetag;
+	struct fscache_cookie *fscache;
+#endif
 
 	char *uname;		/* user name to mount as */
 	char *aname;		/* name of remote hierarchy being mounted */
