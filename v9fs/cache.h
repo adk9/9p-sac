@@ -54,6 +54,8 @@ void v9fs_cache_inode_reset_cookie(struct inode *inode);
 extern int __v9fs_cache_register(void);
 extern void __v9fs_cache_unregister(void);
 
+extern int __v9fs_fscache_release_page(struct page *page, gfp_t gfp);
+extern void __v9fs_fscache_invalidate_page(struct page *page);
 extern int __v9fs_readpage_from_fscache(struct inode *inode,
 					struct page *page);
 extern int __v9fs_readpages_from_fscache(struct inode *inode,
@@ -77,6 +79,17 @@ static inline int v9fs_cache_register(void)
 static inline void v9fs_cache_unregister(void)
 {
 	__v9fs_cache_unregister();
+}
+
+static inline int v9fs_fscache_release_page(struct page *page,
+					    gfp_t gfp)
+{
+	return __v9fs_fscache_release_page(page, gfp);
+}
+
+static inline void v9fs_fscache_invalidate_page(struct page *page)
+{
+	__v9fs_fscache_invalidate_page(page);
 }
 
 static inline int v9fs_readpage_from_fscache(struct inode *inode,
@@ -125,6 +138,11 @@ static inline int v9fs_cache_register(void)
 }
 
 static inline void v9fs_cache_unregister(void) {}
+
+static inline int v9fs_fscache_release_page(struct page *page,
+					    gfp_t gfp) {}
+
+static inline void v9fs_fscache_invalidate_page(struct page *page) {}
 
 static inline int v9fs_readpage_from_fscache(struct inode *inode,
 					     struct page *page)

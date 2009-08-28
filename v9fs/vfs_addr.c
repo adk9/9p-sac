@@ -56,8 +56,9 @@ static int v9fs_vfs_readpage(struct file *filp, struct page *page)
 	struct inode *inode;
 
 	inode = page->mapping->host;
-
 	P9_DPRINTK(P9_DEBUG_VFS, "\n");
+
+	BUG_ON(!PageLocked(page));
 
 	retval = v9fs_readpage_from_fscache(inode, page);
 	if (retval == 0)
@@ -113,7 +114,29 @@ static int v9fs_vfs_readpages(struct file *filp, struct address_space *mapping,
 	return ret;
 }
 
+static int v9fs_release_page(struct page *page, gfp_t gfp)
+{
+	if (PagePrivate(page))
+		return 0;
+
+	return v9fs_fscache_release_page(page, gfp);
+}
+
+static void v9fs_invalidate_page(struct page *page, unsigned long offset)
+{
+	if (offset == 0)
+		v9fs_fscache_invalidate_page(page);
+}
+
+static int v9fs_launder_page(struct page *page)
+{
+	return 0;
+}
+
 const struct address_space_operations v9fs_addr_operations = {
       .readpage = v9fs_vfs_readpage,
       .readpages = v9fs_vfs_readpages,
+      .releasepage = v9fs_release_page,
+      .invalidatepage = v9fs_invalidate_page,
+      .launder_page = v9fs_launder_page,
 };

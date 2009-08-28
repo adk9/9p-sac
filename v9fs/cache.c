@@ -148,9 +148,10 @@ static uint16_t v9fs_cache_inode_get_key(const void *cookie_netfs_data,
 					 void *buffer, uint16_t bufmax)
 {
 	const struct v9fs_cookie *vcookie = cookie_netfs_data;
+	memcpy(buffer, &vcookie->qid->path, sizeof(vcookie->qid->path));
+
 	P9_DPRINTK(P9_DEBUG_FSC, "inode %p get key %llu", &vcookie->inode,
 		   vcookie->qid->path);
-	memcpy(buffer, &vcookie->qid->path, sizeof(vcookie->qid->path));
 	return sizeof(vcookie->qid->path);
 }
 
@@ -158,20 +159,20 @@ static void v9fs_cache_inode_get_attr(const void *cookie_netfs_data,
 				      uint64_t *size)
 {
 	const struct v9fs_cookie *vcookie = cookie_netfs_data;
-	P9_DPRINTK(P9_DEBUG_FSC, "inode %p get attr %llu", &vcookie->inode,
-		   vcookie->inode.i_size);
+	*size = i_size_read(&vcookie->inode);
 
-	*size = vcookie->inode.i_size;
+	P9_DPRINTK(P9_DEBUG_FSC, "inode %p get attr %llu", &vcookie->inode,
+		   *size);
 }
 
 static uint16_t v9fs_cache_inode_get_aux(const void *cookie_netfs_data,
 					 void *buffer, uint16_t buflen)
 {
 	const struct v9fs_cookie *vcookie = cookie_netfs_data;
+	memcpy(buffer, &vcookie->qid->version, sizeof(vcookie->qid->version));
+
 	P9_DPRINTK(P9_DEBUG_FSC, "inode %p get aux %u", &vcookie->inode,
 		   vcookie->qid->version);
-
-	memcpy(buffer, &vcookie->qid->version, sizeof(vcookie->qid->version));
 	return sizeof(vcookie->qid->version);
 }
 
@@ -273,9 +274,6 @@ void v9fs_cache_inode_flush_cookie(struct inode *inode)
 	P9_DPRINTK(P9_DEBUG_FSC, "inode %p flush cookie %p", inode,
 		   vcookie->fscache);
 
-	if (inode->i_mapping && inode->i_mapping->nrpages)
-		invalidate_inode_pages2(inode->i_mapping);
-
 	fscache_relinquish_cookie(vcookie->fscache, 1);
 	vcookie->fscache = NULL;
 }
@@ -323,8 +321,43 @@ void v9fs_cache_inode_reset_cookie(struct inode *inode)
 	spin_unlock(&vcookie->lock);
 }
 
-static void v9fs_vfs_readpage_complete(struct page *page,
-				       void *data,
+int __v9fs_fscache_release_page(struct page *page, gfp_t gfp)
+{
+	struct inode *inode = page->mapping->host;
+	struct v9fs_cookie *vcookie = v9fs_inode2cookie(inode);
+
+	BUG_ON(!vcookie->fscache);
+
+	if (PageFsCache(page)) {
+		if (fscache_check_page_write(vcookie->fscache, page)) {
+			if (!(gfp & __GFP_WAIT))
+				return 0;
+			fscache_wait_on_page_write(vcookie->fscache, page);
+		}
+
+		fscache_uncache_page(vcookie->fscache, page);
+		ClearPageFsCache(page);
+	}
+
+	return 1;
+}
+
+void __v9fs_fscache_invalidate_page(struct page *page)
+{
+	struct inode *inode = page->mapping->host;
+	struct v9fs_cookie *vcookie = v9fs_inode2cookie(inode);
+
+	BUG_ON(!vcookie->fscache);
+
+	if (PageFsCache(page)) {
+		fscache_wait_on_page_write(vcookie->fscache, page);
+		BUG_ON(!PageLocked(page));
+		fscache_uncache_page(vcookie->fscache, page);
+		ClearPageFsCache(page);
+	}
+}
+
+static void v9fs_vfs_readpage_complete(struct page *page, void *data,
 				       int error)
 {
 	if (!error)
@@ -385,7 +418,7 @@ int __v9fs_readpages_from_fscache(struct inode *inode,
 		return 1;
 	case 0:
 		BUG_ON(!list_empty(pages));
-		BUG_ON(nr_pages != 0);
+		BUG_ON(*nr_pages != 0);
 		P9_DPRINTK(P9_DEBUG_FSC, "BIO submitted");
 		return ret;
 	default:
