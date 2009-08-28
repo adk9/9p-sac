@@ -98,10 +98,8 @@ struct v9fs_session_info {
 	unsigned int dfltgid;	/* default gid for legacy support */
 	u32 uid;		/* if ACCESS_SINGLE, the uid that has access */
 	struct p9_client *clnt;	/* 9p client */
-	struct dentry *debugfs_dir;
+	struct list_head slist; /* list of sessions registered with v9fs */
 };
-
-extern struct dentry *v9fs_debugfs_root;
 
 struct p9_fid *v9fs_session_init(struct v9fs_session_info *, const char *,
 									char *);

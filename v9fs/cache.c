@@ -97,26 +97,20 @@ static uint16_t v9fs_cache_session_get_key(const void *cookie_netfs_data,
 					   void *buffer, uint16_t bufmax)
 {
 	struct v9fs_session_info *v9ses;
-	uint16_t klen;
+	uint16_t klen = 0;
 
 	v9ses = (struct v9fs_session_info *)cookie_netfs_data;
 	P9_DPRINTK(P9_DEBUG_FSC, "session %p buf %p size %u", v9ses, 
 		   buffer, bufmax);
 
-	/* If no cache session tag was specified, we generate a random one. */
-	if (!v9ses->cachetag) {
-		klen = v9fs_random_cachetag(v9ses);
-		if (klen < 0)
-			return 0;
-	} else {
+	if (v9ses->cachetag)
 		klen = strlen(v9ses->cachetag);
-	}
 
 	if (klen > bufmax)
 		return 0;
 
+	memcpy(buffer, v9ses->cachetag, klen);
 	P9_DPRINTK(P9_DEBUG_FSC, "cache session tag %s", v9ses->cachetag);
-	memcpy(buffer, v9ses, klen);
 	return klen;
 }
 
@@ -128,6 +122,10 @@ const struct fscache_cookie_def v9fs_cache_session_index_def = {
 
 void v9fs_cache_session_get_cookie(struct v9fs_session_info *v9ses)
 {
+	/* If no cache session tag was specified, we generate a random one. */
+	if (!v9ses->cachetag)
+		v9fs_random_cachetag(v9ses);
+
 	v9ses->fscache = fscache_acquire_cookie(v9fs_cache_netfs.primary_index,
 						&v9fs_cache_session_index_def,
 						v9ses);

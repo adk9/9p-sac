@@ -134,7 +134,7 @@ static inline void v9fs_vcookie_set_qid(struct inode *inode,
 
 static inline int v9fs_cache_register(void)
 {
-	return 0;
+	return 1;
 }
 
 static inline void v9fs_cache_unregister(void) {}

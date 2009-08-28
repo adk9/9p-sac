@@ -36,10 +36,13 @@
 #include "v9fs_vfs.h"
 #include "cache.h"
 
+static DEFINE_SPINLOCK(v9fs_sessionlist_lock);
+static LIST_HEAD(v9fs_sessionlist);
+
 /*
-  * Option Parsing (code inspired by NFS code)
-  *  NOTE: each transport will parse its own options
-  */
+ * Option Parsing (code inspired by NFS code)
+ *  NOTE: each transport will parse its own options
+ */
 
 enum {
 	/* Options that take integer arguments */
@@ -278,6 +281,10 @@ struct p9_fid *v9fs_session_init(struct v9fs_session_info *v9ses,
 	/* register the session for caching */
 	v9fs_cache_session_get_cookie(v9ses);
 #endif
+
+	spin_lock(&v9fs_sessionlist_lock);
+	list_add(&v9ses->slist, &v9fs_sessionlist);
+	spin_unlock(&v9fs_sessionlist_lock);
 	return fid;
 
 error:
@@ -303,6 +310,10 @@ void v9fs_session_close(struct v9fs_session_info *v9ses)
 #endif
 	__putname(v9ses->uname);
 	__putname(v9ses->aname);
+
+	spin_lock(&v9fs_sessionlist_lock);
+	list_del(&v9ses->slist);
+	spin_unlock(&v9fs_sessionlist_lock);
 }
 
 /**
@@ -319,6 +330,64 @@ void v9fs_session_cancel(struct v9fs_session_info *v9ses) {
 
 extern int v9fs_error_init(void);
 
+static struct kobject *v9fs_kobj;
+
+static ssize_t caches_show(struct kobject *kobj,
+			   struct kobj_attribute *attr,
+			   char *buf)
+{
+	ssize_t n = 0, count = 0, limit = PAGE_SIZE;
+	struct v9fs_session_info *v9ses;
+
+	spin_lock(&v9fs_sessionlist_lock);
+	list_for_each_entry(v9ses, &v9fs_sessionlist, slist) {
+		n = snprintf(buf, limit, "%s\n", v9ses->cachetag);
+		if (n < 0) {
+			count = n;
+			break;
+		}
+
+		count += n;
+		limit -= n;
+	}
+
+	spin_unlock(&v9fs_sessionlist_lock);
+	return count;
+}
+
+static struct kobj_attribute v9fs_attr_cache = __ATTR_RO(caches);
+
+static struct attribute *v9fs_attrs[] = {
+#ifdef CONFIG_9P_FSCACHE
+	&v9fs_attr_cache.attr,
+#endif
+	NULL,
+};
+
+static struct attribute_group v9fs_attr_group = {
+	.attrs = v9fs_attrs,
+};
+
+static int v9fs_sysfs_init(void)
+{
+	v9fs_kobj = kobject_create_and_add("9p", fs_kobj);
+	if (!v9fs_kobj)
+		return -ENOMEM;
+
+	if (sysfs_create_group(v9fs_kobj, &v9fs_attr_group)) {
+		kobject_put(v9fs_kobj);
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+static void v9fs_sysfs_cleanup(void)
+{
+	sysfs_remove_group(v9fs_kobj, &v9fs_attr_group);
+	kobject_put(v9fs_kobj);
+}
+
 /**
  * v9fs_init - Initialize module
  *
@@ -328,12 +397,33 @@ static int __init init_v9fs(void)
 {
 	int err;
 	printk(KERN_INFO "Installing v9fs 9p2000 file system support\n");
-	err = v9fs_cache_register();
-	if (err < 0)
-		return err;
-
 	/* TODO: Setup list of registered trasnport modules */
-	return register_filesystem(&v9fs_fs_type);
+	err = register_filesystem(&v9fs_fs_type);
+	if (err < 0) {
+		printk(KERN_ERR "Failed to register filesystem\n");
+		return err;
+	}
+
+	err = v9fs_cache_register();
+	if (err < 0) {
+		printk(KERN_ERR "Failed to register v9fs for caching\n");
+		goto out_fs_unreg;
+	}
+
+	err = v9fs_sysfs_init();
+	if (err < 0) {
+		printk(KERN_ERR "Failed to register with sysfs\n");
+		goto out_sysfs_cleanup;
+	}
+
+	return 0;
+
+out_sysfs_cleanup:
+	v9fs_sysfs_cleanup();
+out_fs_unreg:
+	unregister_filesystem(&v9fs_fs_type);
+
+	return err;
 }
 
 /**
@@ -343,6 +433,7 @@ static int __init init_v9fs(void)
 
 static void __exit exit_v9fs(void)
 {
+	v9fs_sysfs_cleanup();
 	v9fs_cache_unregister();
 	unregister_filesystem(&v9fs_fs_type);
 }
