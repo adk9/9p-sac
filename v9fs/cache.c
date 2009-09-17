@@ -79,10 +79,6 @@ void __v9fs_cache_unregister(void)
 	fscache_unregister_netfs(&v9fs_cache_netfs);
 }
 
-/**
- * TODO: Need a way to export cachetags via sysfs.
- */
-
 static
 int v9fs_random_cachetag(struct v9fs_session_info *v9ses)
 {
